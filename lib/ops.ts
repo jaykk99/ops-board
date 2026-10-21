@@ -1,4 +1,5 @@
 import { supabase } from './supabase';
+import { clampPriority, isUuid, isValidNote, type Priority } from './format';
 
 export type RunRow = {
   id: string;
@@ -26,6 +27,7 @@ export type NoteRow = {
   author: string;
   topic: string;
   note: string;
+  priority: Priority;
   created_at: string;
 };
 
@@ -82,12 +84,13 @@ export async function getDone() {
   return { runs: (runs || []) as RunRow[], log };
 }
 
-/** Up next: task notes Jay wrote plus queued runs not yet started. */
+/** Up next: task notes Jay wrote plus queued runs not yet started. Notes come back highest priority first. */
 export async function getNext() {
   const { data: notes } = await supabase()
     .from('shared_notes')
-    .select('id,author,topic,note,created_at')
+    .select('id,author,topic,note,priority,created_at')
     .eq('topic', 'task')
+    .order('priority', { ascending: false })
     .order('created_at', { ascending: false })
     .limit(30);
 
@@ -102,25 +105,60 @@ export async function getNext() {
 }
 
 /** Jay assigns a task from the board. Lands in shared_notes for agents to pick up. */
-export async function addTask(note: string, author = 'jay') {
+export async function addTask(note: string, author = 'jay', priority: unknown = 2) {
+  const clean = String(note).trim();
+  if (!isValidNote(clean)) throw new Error('note required (1-2000 chars)');
   const { data, error } = await supabase()
     .from('shared_notes')
-    .insert({ author, topic: 'task', note })
-    .select('id,author,topic,note,created_at')
+    .insert({ author, topic: 'task', note: clean, priority: clampPriority(priority) })
+    .select('id,author,topic,note,priority,created_at')
     .single();
   if (error) throw new Error(error.message);
   return data as NoteRow;
 }
 
+/** Edit a task note's text and/or priority. */
+export async function updateTask(id: string, patch: { note?: string; priority?: unknown }) {
+  if (!isUuid(id)) throw new Error('valid note id required');
+  const update: { note?: string; priority?: Priority } = {};
+  if (patch.note !== undefined) {
+    const clean = String(patch.note).trim();
+    if (!isValidNote(clean)) throw new Error('note must be 1-2000 chars');
+    update.note = clean;
+  }
+  if (patch.priority !== undefined) update.priority = clampPriority(patch.priority);
+  if (!Object.keys(update).length) throw new Error('nothing to update');
+  const { data, error } = await supabase()
+    .from('shared_notes')
+    .update(update)
+    .eq('id', id)
+    .select('id,author,topic,note,priority,created_at')
+    .single();
+  if (error) throw new Error(error.message);
+  return data as NoteRow;
+}
+
+/** Delete a task note without logging it. */
+export async function deleteTask(id: string) {
+  if (!isUuid(id)) throw new Error('valid note id required');
+  const { error } = await supabase().from('shared_notes').delete().eq('id', id);
+  if (error) throw new Error(error.message);
+  return { ok: true };
+}
+
 /** Mark a task note done by removing it from the queue and logging it. */
 export async function completeTask(noteId: string) {
+  if (!isUuid(noteId)) throw new Error('valid note id required');
   const { data: note } = await supabase()
     .from('shared_notes')
     .select('note')
     .eq('id', noteId)
     .single();
   if (note) {
-    await supabase().from('ops_log').insert({ title: note.note.slice(0, 200), detail: 'completed from board' });
+    const { error: logError } = await supabase()
+      .from('ops_log')
+      .insert({ title: note.note.slice(0, 200), detail: 'completed from board' });
+    if (logError) throw new Error(`log write failed: ${logError.message}`);
   }
   const { error } = await supabase().from('shared_notes').delete().eq('id', noteId);
   if (error) throw new Error(error.message);
@@ -129,9 +167,11 @@ export async function completeTask(noteId: string) {
 
 /** Manual log entry for finished work. */
 export async function logDone(title: string, detail = '') {
+  const clean = String(title).trim();
+  if (!isValidNote(clean)) throw new Error('title required (1-2000 chars)');
   const { data, error } = await supabase()
     .from('ops_log')
-    .insert({ title, detail })
+    .insert({ title: clean, detail: String(detail).slice(0, 2000) })
     .select('id,title,detail,created_at')
     .single();
   if (error) throw new Error(error.message);
