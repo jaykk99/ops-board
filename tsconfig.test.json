@@ -1,0 +1,1 @@
+{"compilerOptions":{"incremental":false,"module":"NodeNext","moduleResolution":"NodeNext","noEmit":false,"outDir":".test-build","plugins":[]},"exclude":["node_modules",".next"],"extends":"./tsconfig.json","include":["lib/format.ts","tests/**/*.ts"]}
