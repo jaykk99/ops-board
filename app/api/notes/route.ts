@@ -39,7 +39,7 @@ export async function PATCH(req: NextRequest) {
 export async function DELETE(req: NextRequest) {
   try {
     const body = await req.json().catch(() => ({}));
-    return NextResponse.json({ ok: true, ...(await deleteTask(String(body.id || ''))) });
+    return NextResponse.json(await deleteTask(String(body.id || '')));
   } catch (e: any) {
     const status = /required|valid/i.test(e?.message || '') ? 400 : 500;
     return NextResponse.json({ ok: false, error: e?.message || 'failed' }, { status });
